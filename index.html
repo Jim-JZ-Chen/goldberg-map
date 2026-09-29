@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>戈德堡多面体 · Goldberg Polyhedron</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0d1117; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  #scene { position: fixed; inset: 0; }
+  .panel {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    background: rgba(13,17,23,.82); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,.08); border-radius: 14px;
+    padding: 18px 20px; color: #e6edf3; width: 280px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    transition: width .25s ease, padding .25s ease;
+  }
+  .panel .collapse-btn {
+    position: absolute; top: 10px; right: 10px;
+    width: 26px; height: 26px; border: none; border-radius: 8px;
+    background: rgba(255,255,255,.06); color: #9da7b3;
+    font-size: 15px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .panel .collapse-btn:hover { background: rgba(255,255,255,.14); color: #e6edf3; }
+  .panel.collapsed { width: auto; padding: 10px 40px 10px 14px; }
+  .panel.collapsed .sub, .panel.collapsed .body { display: none; }
+  .panel.collapsed h1 { font-size: 13px; margin: 0; }
+  .panel h1 { font-size: 17px; font-weight: 600; margin-bottom: 2px; }
+  .panel .sub { font-size: 11px; color: #8b949e; margin-bottom: 14px; }
+  .row { margin-bottom: 13px; }
+  .row label { display: flex; justify-content: space-between; font-size: 12px; color: #9da7b3; margin-bottom: 6px; }
+  .row label b { color: #58d6ff; font-weight: 600; }
+  input[type=range] { width: 100%; accent-color: #58d6ff; cursor: pointer; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 14px; }
+  .toggles label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #c9d1d9; cursor: pointer; user-select: none; }
+  .toggles input { accent-color: #58d6ff; cursor: pointer; }
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    font-size: 12px; border-top: 1px solid rgba(255,255,255,.08); padding-top: 12px;
+  }
+  .stats div { background: rgba(255,255,255,.04); border-radius: 8px; padding: 7px 10px; }
+  .stats span { display: block; color: #8b949e; font-size: 10px; margin-bottom: 2px; }
+  .stats b.tl span { display: inline; font-size: 12px; color: #c9d1d9; }
+  .stats b { font-size: 15px; color: #e6edf3; font-variant-numeric: tabular-nums; }
+  .stats b.penta { color: #ff7b72; }
+  .stats b.hexa { color: #58d6ff; }
+  .note { margin-top: 10px; font-size: 10px; color: #6e7681; line-height: 1.6; }
+  .hint {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: #6e7681; z-index: 10; pointer-events: none;
+    background: rgba(13,17,23,.6); padding: 5px 14px; border-radius: 20px;
+  }
+  @media (max-width: 640px) {
+    .panel { width: calc(100vw - 32px); padding: 14px 16px; }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+
+<div class="panel" id="panel">
+  <button class="collapse-btn" id="collapseBtn" title="收起 / 展开">—</button>
+  <h1>戈德堡多面体</h1>
+  <div class="sub">Goldberg Polyhedron GP(m, 0) · 12 个五边形 + N 个六边形</div>
+
+  <div class="body">
+  <div class="row">
+    <label>细分频率 m <b id="freqVal">2</b></label>
+    <input type="range" id="freq" min="1" max="10" step="1" value="2">
+  </div>
+
+  <div class="row">
+    <label>细分方式 <b id="methodVal">弦投影</b></label>
+    <select id="method" style="width:100%;background:#161b22;color:#e6edf3;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:7px 10px;font-size:13px;cursor:pointer;">
+      <option value="chord">弦投影（原始，最不均匀）</option>
+      <option value="slerp">球面弧细分（slerp，较均匀）</option>
+      <option value="relax">等面积松弛（Snyder 思路，最均匀）</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <label>领地数量 <b id="terrVal">4</b></label>
+    <input type="range" id="terrCount" min="2" max="8" step="1" value="4">
+  </div>
+
+  <div class="toggles">
+    <label><input type="checkbox" id="autorotate" checked> 自动旋转</label>
+    <label><input type="checkbox" id="gaps" checked> 板块间隙</label>
+    <label><input type="checkbox" id="wireframe"> 显示三角网格</label>
+    <label><input type="checkbox" id="gameMode" checked> 地图模式（点格子寻路）</label>
+    <label><input type="checkbox" id="showBorders" checked> 领地边界</label>
+  </div>
+
+  <div class="stats" id="pathStat" style="display:none; margin-bottom: 13px; border-top:none; padding-top:0;">
+    <div style="grid-column: 1/-1;"><span>寻路演示：绿=起点 红=终点 橙=路径（A*）</span><b id="sPath">点击两个格子</b></div>
+  </div>
+
+  <div class="stats">
+    <div><span>五边形（永远 = 12）</span><b class="penta" id="sPenta">12</b></div>
+    <div><span>六边形</span><b class="hexa" id="sHexa">30</b></div>
+    <div><span>顶点 V</span><b id="sV">92</b></div>
+    <div><span>棱 E</span><b id="sE">270</b></div>
+    <div style="grid-column: 1/-1;"><span>地形（只有陆地可通行）</span>
+      <b class="tl" style="font-size:12px; font-weight:400;">
+        <span style="color:#5b9bd5">■</span> 海洋 <span id="sT0">0</span> ·
+        <span style="color:#8ba860">■</span> 陆地 <span id="sT1">0</span> ·
+        <span style="color:#4a8f6f">■</span> 森林 <span id="sT2">0</span> ·
+        <span style="color:#b0b0b0">■</span> 山脉 <span id="sT3">0</span>
+      </b>
+      <button id="newMap" style="margin-top:6px; width:100%; background:#21262d; color:#58d6ff; border:1px solid rgba(88,214,255,.3); border-radius:8px; padding:6px; font-size:12px; cursor:pointer;">🎲 换一张地图</button>
+    </div>
+    <div style="grid-column: 1/-1;"><span>六边形面积均匀度（最大 ÷ 最小，越接近 1 越均匀）</span><b id="sUniform">-</b></div>
+    <div style="grid-column: 1/-1;"><span>面 F = 五边形 + 六边形 · 欧拉验证 V−E+F=2</span><b id="sF">42</b></div>
+  </div>
+
+  <div class="note">五边形（红）是球面曲率的「缺陷点」：无论 m 多大，永远恰好 12 个。m=1 时是正十二面体（0 个六边形）；足球则对应另一序列的 GP(1,1)（截角二十面体）。</div>
+  </div>
+</div>
+
+<div class="hint">拖动旋转 · 滚轮缩放</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- 场景 ----------
+const container = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 0.6, 3.4);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 1.2;
+controls.minDistance = 1.8;
+controls.maxDistance = 10;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(3, 4, 5); scene.add(key);
+const fill = new THREE.DirectionalLight(0x58d6ff, 0.5); fill.position.set(-4, -2, -3); scene.add(fill);
+
+const group = new THREE.Group();
+scene.add(group);
+
+// ---------- 柏林噪声（3D，可播种） ----------
+function makeNoise(seed) {
+  const perm = new Uint8Array(512);
+  const p = Array.from({ length: 256 }, (_, i) => i);
+  let s = seed;
+  const rand = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  for (let i = 255; i > 0; i--) {
+    const j = (rand() * (i + 1)) | 0;
+    [p[i], p[j]] = [p[j], p[i]];
+  }
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  const lerp = (t, a, b) => a + t * (b - a);
+  const grad = (h, x, y, z) => {
+    const u = h < 8 ? x : y, v = h < 4 ? y : (h === 12 || h === 14 ? x : z);
+    return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+  };
+  function noise(x, y, z) {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
+    x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
+    const u = fade(x), v = fade(y), w = fade(z);
+    const A = perm[X] + Y, AA = perm[A] + Z, AB = perm[A + 1] + Z;
+    const B = perm[X + 1] + Y, BA = perm[B] + Z, BB = perm[B + 1] + Z;
+    return lerp(w,
+      lerp(v, lerp(u, grad(perm[AA] & 15, x, y, z), grad(perm[BA] & 15, x - 1, y, z)),
+              lerp(u, grad(perm[AB] & 15, x, y - 1, z), grad(perm[BB] & 15, x - 1, y - 1, z))),
+      lerp(v, lerp(u, grad(perm[AA + 1] & 15, x, y, z + 1), grad(perm[BA + 1] & 15, x - 1, y, z + 1)),
+              lerp(u, grad(perm[AB + 1] & 15, x, y - 1, z + 1), grad(perm[BB + 1] & 15, x - 1, y - 1, z + 1))));
+  }
+  // fbm：多倍频叠加，产生大陆+细节
+  return (x, y, z, octaves = 4) => {
+    let sum = 0, amp = 1, freq = 1, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      sum += noise(x * freq, y * freq, z * freq) * amp;
+      norm += amp; amp *= 0.5; freq *= 2;
+    }
+    return sum / norm; // [-1, 1]
+  };
+}
+
+// 地形定义：0海洋 1陆地 2森林 3山脉（只有陆地可通行）
+const TERRAIN = [
+  { name: '海洋', color: new THREE.Color(0x1a4a6e), passable: false },
+  { name: '陆地', color: new THREE.Color(0x8ba860), passable: true },
+  { name: '森林', color: new THREE.Color(0x2d6a4f), passable: false },
+  { name: '山脉', color: new THREE.Color(0x9a9a9a), passable: false },
+];
+let terrainSeed = (Math.random() * 1e9) | 0;
+function classifyTerrain(fbm, center) {
+  // 球面上采样，scale 控制大陆尺度
+  const t = (fbm(center.x * 1.6, center.y * 1.6, center.z * 1.6, 4) + 1) / 2; // [0,1]
+  // 陆地为主的配比：海洋约 1/4，山脉只留高峰
+  if (t < 0.36) return 0;
+  if (t < 0.68) return 1;
+  if (t < 0.82) return 2;
+  return 3;
+}
+
+// 领地配色（最多 8 个）
+const TERRITORY_COLORS = [0xe74c3c, 0x3498db, 0xf39c12, 0x9b59b6, 0x1abc9c, 0xe67e22, 0xfd79a8, 0x00cec9]
+  .map(c => new THREE.Color(c));
+
+// ---------- 戈德堡多面体生成 ----------
+// 1. 二十面体细分 -> 测地线三角网格；2. 取对偶 -> 五边形+六边形
+function slerpVec(a, b, t) {
+  const dot = Math.min(1, Math.max(-1, a.dot(b)));
+  const th = Math.acos(dot);
+  if (th < 1e-8) return a.clone();
+  return a.clone().multiplyScalar(Math.sin((1-t)*th)/Math.sin(th))
+    .add(b.clone().multiplyScalar(Math.sin(t*th)/Math.sin(th)));
+}
+
+function buildGoldberg(freq, method) {
+  const t = (1 + Math.sqrt(5)) / 2;
+  let verts = [
+    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
+  ].map(v => new THREE.Vector3(...v).normalize());
+  let faces = [
+    [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],
+    [10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],
+    [2,4,11],[6,2,10],[8,6,7],[9,8,1]
+  ];
+
+  // 细分：每个三角形切成 freq^2 个小三角形
+  const vMap = new Map();
+  const newVerts = [];
+  const keyOf = v => v.x.toFixed(6) + ',' + v.y.toFixed(6) + ',' + v.z.toFixed(6);
+  function getV(v) {
+    const k = keyOf(v);
+    if (vMap.has(k)) return vMap.get(k);
+    const idx = newVerts.length;
+    newVerts.push(v.clone().normalize());
+    vMap.set(k, idx);
+    return idx;
+  }
+  const newFaces = [];
+  for (const [ia, ib, ic] of faces) {
+    const A = verts[ia], B = verts[ib], C = verts[ic];
+    const grid = [];
+    for (let i = 0; i <= freq; i++) {
+      grid[i] = [];
+      for (let j = 0; j <= freq - i; j++) {
+        const k = freq - i - j;
+        let p;
+        if (method === 'chord') {
+          // 弦细分：平面插值后投影到球面
+          p = new THREE.Vector3()
+            .addScaledVector(A, i / freq)
+            .addScaledVector(B, j / freq)
+            .addScaledVector(C, k / freq);
+        } else {
+          // 球面弧细分：沿大圆弧插值，网格在球面上更均匀
+          const ab = slerpVec(A, B, (i + j) === 0 ? 0 : j / (i + j));
+          p = slerpVec(ab, C, k / freq);
+        }
+        grid[i][j] = getV(p);
+      }
+    }
+    for (let i = 0; i < freq; i++) {
+      for (let j = 0; j < freq - i; j++) {
+        newFaces.push([grid[i][j], grid[i][j+1], grid[i+1][j]]);
+        if (j < freq - i - 1) newFaces.push([grid[i][j+1], grid[i+1][j+1], grid[i+1][j]]);
+      }
+    }
+  }
+  verts = newVerts; faces = newFaces;
+
+  // 等面积松弛（Snyder 等面积投影的数值实现）：
+  // 目标函数 = 所有球面三角形面积与均值之差的平方和，
+  // 沿切平面做梯度下降迭代。三角形等面积 => 对偶六边形也等面积。
+  if (method === 'relax') {
+    const sphArea = (a, b, c) => {
+      const corner = (x, y, z) => {
+        const u = new THREE.Vector3().crossVectors(x, y).normalize();
+        const v = new THREE.Vector3().crossVectors(x, z).normalize();
+        return Math.acos(Math.min(1, Math.max(-1, u.dot(v))));
+      };
+      return corner(a, b, c) + corner(b, c, a) + corner(c, a, b) - Math.PI;
+    };
+    const adjF = verts.map(() => []);
+    faces.forEach((f, fi) => f.forEach(v => adjF[v].push(fi)));
+    const target = 4 * Math.PI / faces.length;
+    const ITER = 350, STEP = 0.15, H = 1e-4;
+    for (let it = 0; it < ITER; it++) {
+      const next = verts.map(v => v.clone());
+      for (let v = 0; v < verts.length; v++) {
+        const n = verts[v];
+        const up = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+        const u1 = new THREE.Vector3().crossVectors(up, n).normalize();
+        const u2 = new THREE.Vector3().crossVectors(n, u1);
+        const energy = (vv) => {
+          let e = 0;
+          for (const fi of adjF[v]) {
+            const f = faces[fi];
+            const p0 = f[0] === v ? vv : verts[f[0]];
+            const p1 = f[1] === v ? vv : verts[f[1]];
+            const p2 = f[2] === v ? vv : verts[f[2]];
+            const a = sphArea(p0, p1, p2);
+            e += (a - target) * (a - target);
+          }
+          return e;
+        };
+        const e0 = energy(n);
+        const gx = (energy(n.clone().addScaledVector(u1, H)) - e0) / H;
+        const gy = (energy(n.clone().addScaledVector(u2, H)) - e0) / H;
+        next[v] = n.clone().addScaledVector(u1, -STEP * gx).addScaledVector(u2, -STEP * gy).normalize();
+      }
+      verts = next;
+    }
+  }
+
+  // 顶点 -> 相邻三角形
+  const adj = verts.map(() => []);
+  faces.forEach((f, fi) => f.forEach(v => adj[v].push(fi)));
+  const centroids = faces.map(f =>
+    new THREE.Vector3().add(verts[f[0]]).add(verts[f[1]]).add(verts[f[2]]).divideScalar(3));
+
+  // 对偶：每个原顶点变成一个 cell（5 或 6 个相邻三角形 -> 五边形/六边形）
+  const cells = [];
+  for (let v = 0; v < verts.length; v++) {
+    const tris = adj[v];
+    const n = verts[v];
+    // 切平面基
+    const up = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+    const u = new THREE.Vector3().crossVectors(up, n).normalize();
+    const w = new THREE.Vector3().crossVectors(n, u);
+    const pts = tris.map(fi => centroids[fi]).map(c => {
+      const d = c.clone().sub(n);
+      return { p: c.clone().normalize(), ang: Math.atan2(d.dot(w), d.dot(u)) };
+    });
+    pts.sort((a, b) => a.ang - b.ang);
+    cells.push(pts.map(o => o.p));
+  }
+  return { cells, triVerts: verts, triFaces: faces };
+}
+
+// ---------- 渲染 ----------
+const matTerrain = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.1, side: THREE.DoubleSide });
+const matEdge  = new THREE.LineBasicMaterial({ color: 0x0d1117 });
+const matWire  = new THREE.LineBasicMaterial({ color: 0x58d6ff, transparent: true, opacity: 0.25 });
+
+let disposables = [];
+let cellData = [];       // { center, ring, triStart, triCount }
+let cellAdj = [];        // 邻接表（游戏逻辑层）
+let pickMesh = null;     // 不可见的拾取网格
+let territoryOf = [];    // cell -> 领地 id
+let capitals = [];       // 首都格子
+let borderGroup = new THREE.Group();
+scene.add(borderGroup);
+let overlayGroup = new THREE.Group();
+scene.add(overlayGroup);
+
+function rebuild() {
+  disposables.forEach(d => d.dispose());
+  disposables = [];
+  group.clear();
+
+  const freq = +freqInput.value;
+  const method = methodInput.value;
+  document.getElementById('methodVal').textContent = methodInput.selectedOptions[0].textContent.split('（')[0];
+  const { cells, triVerts, triFaces } = buildGoldberg(freq, method);
+  const shrink = gapsInput.checked ? 0.90 : 1.0;
+  const R = 1.0;
+
+  let penta = 0, hexa = 0;
+  const terrainPos = [], terrainCol = [], edgePos = [], pickPos = [];
+  const hexaAreas = [];
+  const terrainCount = [0, 0, 0, 0];
+  cellData = [];
+  const fbm = makeNoise(terrainSeed);
+
+
+  // 邻接表：对偶网格中，原始三角网格的每条边连接两个顶点 => 两个 cell 相邻
+  cellAdj = cells.map(() => []);
+  {
+    const edgeSeen = new Set();
+    for (const f of triFaces) {
+      for (let i = 0; i < 3; i++) {
+        const u = f[i], v = f[(i+1) % 3];
+        const k = Math.min(u,v) + '_' + Math.max(u,v);
+        if (edgeSeen.has(k)) continue;
+        edgeSeen.add(k);
+        cellAdj[u].push(v); cellAdj[v].push(u);
+      }
+    }
+  }
+
+  // ---------- 领地划分：陆地多源 BFS ----------
+  const terrains = cells.map(poly => {
+    const c = new THREE.Vector3();
+    poly.forEach(p => c.add(p));
+    c.divideScalar(poly.length).normalize();
+    return classifyTerrain(fbm, c);
+  });
+  territoryOf = new Array(cells.length).fill(-1);
+  capitals = [];
+  {
+    const landCells = terrains.map((t, i) => t === 1 ? i : -1).filter(i => i >= 0);
+    // 连通分量（被海洋隔开的陆地各自至少有 1 个领地）
+    const comp = new Array(cells.length).fill(-1);
+    let comps = [];
+    for (const s of landCells) {
+      if (comp[s] >= 0) continue;
+      const id = comps.length, q = [s];
+      comp[s] = id; comps.push([]);
+      while (q.length) {
+        const c = q.pop(); comps[id].push(c);
+        for (const n of cellAdj[c]) if (terrains[n] === 1 && comp[n] < 0) { comp[n] = id; q.push(n); }
+      }
+    }
+    comps.sort((a, b) => b.length - a.length);
+    // 每个连通分量至少 1 个首都；多余名额给最大分量；分量内用最远点采样铺开
+    const want = Math.max(1, Math.min(+terrCountInput.value, TERRITORY_COLORS.length));
+    const seeds = [];
+    for (let k = 0; k < want; k++) {
+      const compCells = comps[k % comps.length];
+      // 该分量内与已选种子图距离最远的格子
+      const dist = new Map();
+      const q = [];
+      for (const c of compCells) {
+        const nearSeed = seeds.find(s => comp[s] === comp[c]);
+        dist.set(c, Infinity); q.push(c);
+      }
+      // 多源 BFS 求到本分量已有种子的距离
+      const compSeeds = seeds.filter(s => comp[s] === comp[compCells[0]]);
+      const d = new Map(compCells.map(c => [c, Infinity]));
+      const bq = [];
+      compSeeds.forEach(s => { d.set(s, 0); bq.push(s); });
+      while (bq.length) {
+        const c = bq.shift();
+        for (const n of cellAdj[c]) if (terrains[n] === 1 && d.get(n) === Infinity) { d.set(n, d.get(c) + 1); bq.push(n); }
+      }
+      let best = compCells[0], bd = -1;
+      for (const c of compCells) if (d.get(c) > bd) { bd = d.get(c); best = c; }
+      seeds.push(best);
+    }
+    capitals = seeds;
+    // 多源 BFS：每个格子（含海洋/森林/山脉）都归图距离最近的首都
+    // 这样边界是连续闭合的多段线，不会在地形交界处断开
+    const bq = [];
+    seeds.forEach((s, i) => { territoryOf[s] = i; bq.push(s); });
+    while (bq.length) {
+      const c = bq.shift();
+      for (const n of cellAdj[c]) {
+        if (territoryOf[n] < 0) { territoryOf[n] = territoryOf[c]; bq.push(n); }
+        // 处理五角格等多源同时到达的平局：先到先得
+      }
+    }
+  }
+
+  cells.forEach((poly, ci) => {
+    const center = new THREE.Vector3();
+    poly.forEach(p => center.add(p));
+    center.divideScalar(poly.length).normalize().multiplyScalar(R);
+    const ring = poly.map(p =>
+      center.clone().add(p.clone().multiplyScalar(R).sub(center).multiplyScalar(shrink)));
+    const pickRing = poly.map(p => p.clone().multiplyScalar(R)); // 拾取用完整板块
+    if (poly.length === 5) penta++; else hexa++;
+    const terrain = classifyTerrain(fbm, center);
+    terrainCount[terrain]++;
+    const col = TERRAIN[terrain].color.clone();
+    if (terrain === 1 && territoryOf[ci] >= 0) col.lerp(TERRITORY_COLORS[territoryOf[ci]], 0.45); // 领地染色
+    let area = 0;
+    const triStart = pickPos.length / 3;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i+1) % ring.length];
+      terrainPos.push(center, a, b); // 以中心为顶点的完整扇形
+      terrainCol.push(col, col, col);
+      area += new THREE.Vector3().subVectors(a, center)
+        .cross(new THREE.Vector3().subVectors(b, center)).length() / 2;
+    }
+    for (let i = 0; i < pickRing.length; i++) {
+      pickPos.push(center, pickRing[i], pickRing[(i+1) % pickRing.length]);
+    }
+    cellData.push({ center, ring, triStart, triCount: ring.length, terrain });
+    if (poly.length === 6) hexaAreas.push(area);
+    for (let i = 0; i < ring.length; i++) {
+      edgePos.push(ring[i], ring[(i+1) % ring.length]);
+    }
+  });
+
+  {
+    const g = new THREE.BufferGeometry().setFromPoints(terrainPos);
+    const cols = new Float32Array(terrainCol.length * 3);
+    terrainCol.forEach((c, i) => { cols[i*3] = c.r; cols[i*3+1] = c.g; cols[i*3+2] = c.b; });
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, matTerrain);
+    group.add(m); disposables.push(g);
+  }
+
+  // 内球垫底：板块间隙处不透穿到背面
+  const ig = new THREE.SphereGeometry(0.88, 64, 48);
+  group.add(new THREE.Mesh(ig, new THREE.MeshBasicMaterial({ color: 0x0a0e14 })));
+  disposables.push(ig);
+
+  const eg = new THREE.BufferGeometry().setFromPoints(edgePos);
+  group.add(new THREE.LineSegments(eg, matEdge));
+  disposables.push(eg);
+
+  if (wireInput.checked) {
+    const wp = [];
+    for (const f of triFaces) {
+      wp.push(triVerts[f[0]], triVerts[f[1]], triVerts[f[1]], triVerts[f[2]], triVerts[f[2]], triVerts[f[0]]);
+    }
+    const wg = new THREE.BufferGeometry().setFromPoints(wp);
+    group.add(new THREE.LineSegments(wg, matWire));
+    disposables.push(wg);
+  }
+
+  // 拾取网格（不可见）
+  const pg = new THREE.BufferGeometry().setFromPoints(pickPos);
+  pickMesh = new THREE.Mesh(pg, new THREE.MeshBasicMaterial({ visible: false }));
+  group.add(pickMesh);
+  disposables.push(pg);
+
+  // ---------- 领地边界 + 首都标记 ----------
+  borderGroup.clear();
+  if (showBordersInput.checked) {
+    // 原始三角网格的边 -> 两侧三角形质心（即对偶 cell 的共享边端点）
+    const edgePts = new Map();
+    const triCentroids = triFaces.map(f =>
+      new THREE.Vector3().add(triVerts[f[0]]).add(triVerts[f[1]]).add(triVerts[f[2]])
+        .divideScalar(3).normalize());
+    triFaces.forEach((f, fi) => {
+      const c = triCentroids[fi];
+      for (let i = 0; i < 3; i++) {
+        const a = f[i], b = f[(i+1) % 3];
+        const k = Math.min(a,b) + '_' + Math.max(a,b);
+        if (!edgePts.has(k)) edgePts.set(k, { a: Math.min(a,b), b: Math.max(a,b), pts: [] });
+        edgePts.get(k).pts.push({ c, fi });
+      }
+    });
+    // 文明式边界：分界线两侧，双方各在自己格子内侧画一条自己颜色的边带
+    const borderPos = [], borderCol = [];
+    const W = 0.016, LIFT = 1.018;
+    for (const e of edgePts.values()) {
+      if (e.pts.length !== 2) continue;
+      const ta = territoryOf[e.a], tb = territoryOf[e.b];
+      if (ta === tb) continue;
+      const p1 = e.pts[0].c, p2 = e.pts[1].c;
+      const mid = p1.clone().add(p2).normalize();
+      // 各方向自己 cell 中心一侧偏移
+      for (const [cell, terr] of [[e.a, ta], [e.b, tb]]) {
+        const cc = cellData[cell].center.clone().normalize();
+        const inw = cc.clone().sub(mid);
+        inw.sub(mid.clone().multiplyScalar(inw.dot(mid))); // 切向分量
+        inw.normalize();
+        const col = TERRITORY_COLORS[terr];
+        const lift = p => p.clone().addScaledVector(inw, 0).normalize().multiplyScalar(LIFT);
+        const a1 = p1.clone().normalize().multiplyScalar(LIFT);
+        const a2 = p2.clone().normalize().multiplyScalar(LIFT);
+        const b1 = p1.clone().addScaledVector(inw, W).normalize().multiplyScalar(LIFT);
+        const b2 = p2.clone().addScaledVector(inw, W).normalize().multiplyScalar(LIFT);
+        borderPos.push(a1, a2, b1, b1, a2, b2);
+        for (let k = 0; k < 6; k++) borderCol.push(col);
+      }
+    }
+    if (borderPos.length) {
+      const bg = new THREE.BufferGeometry().setFromPoints(borderPos);
+      const cols = new Float32Array(borderCol.length * 3);
+      borderCol.forEach((c, i) => { cols[i*3] = c.r; cols[i*3+1] = c.g; cols[i*3+2] = c.b; });
+      bg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+      borderGroup.add(new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+      disposables.push(bg);
+    }
+    // 首都：领地色小球
+    capitals.forEach((c, i) => {
+      const mg = new THREE.SphereGeometry(0.022, 16, 12);
+      const marker = new THREE.Mesh(mg, new THREE.MeshBasicMaterial({ color: TERRITORY_COLORS[i] }));
+      marker.position.copy(cellData[c].center).multiplyScalar(1.02);
+      borderGroup.add(marker);
+      disposables.push(mg);
+    });
+  }
+  const terrUsed = new Set(territoryOf.filter(t => t >= 0)).size;
+  document.getElementById('terrVal').textContent = terrUsed;
+
+  clearOverlays();
+  selStart = selEnd = -1;
+  document.getElementById('sPath').textContent = '点击两个格子';
+  document.getElementById('pathStat').style.display = gameModeInput.checked ? '' : 'none';
+
+  // 统计：欧拉公式  V = 10*m^2*2 + 2 = 20m^2+2 …直接按对偶关系算
+  const F = cells.length;                       // 对偶面数 = 原三角网格顶点数
+  const E = cells.reduce((s, c) => s + c.length, 0) / 2;
+  const V = triFaces.length;                    // 对偶顶点数 = 原三角形数
+  document.getElementById('freqVal').textContent = freq;
+  terrainCount.forEach((c, i) => document.getElementById('sT' + i).textContent = c);
+  document.getElementById('sPenta').textContent = penta;
+  document.getElementById('sHexa').textContent = hexa;
+  document.getElementById('sV').textContent = V;
+  document.getElementById('sE').textContent = E;
+  document.getElementById('sF').textContent = F + (V - E + F === 2 ? ' ✓' : '');
+  if (hexaAreas.length) {
+    const ratio = Math.max(...hexaAreas) / Math.min(...hexaAreas);
+    document.getElementById('sUniform').textContent = ratio.toFixed(3);
+  } else {
+    document.getElementById('sUniform').textContent = '—（无六边形）';
+  }
+}
+
+// ---------- 交互 ----------
+const freqInput = document.getElementById('freq');
+const gapsInput = document.getElementById('gaps');
+const wireInput = document.getElementById('wireframe');
+const rotInput  = document.getElementById('autorotate');
+const methodInput = document.getElementById('method');
+methodInput.addEventListener('change', rebuild);
+
+// 面板收起 / 展开
+const panel = document.getElementById('panel');
+const collapseBtn = document.getElementById('collapseBtn');
+collapseBtn.addEventListener('click', () => {
+  const collapsed = panel.classList.toggle('collapsed');
+  collapseBtn.textContent = collapsed ? '☰' : '—';
+});
+// 换地图按钮
+document.getElementById('newMap').addEventListener('click', () => {
+  terrainSeed = (Math.random() * 1e9) | 0;
+  rebuild();
+});
+
+// 窄屏默认收起，避免挡住球面
+if (innerWidth < 640) { panel.classList.add('collapsed'); collapseBtn.textContent = '☰'; }
+freqInput.addEventListener('input', rebuild);
+gapsInput.addEventListener('change', rebuild);
+wireInput.addEventListener('change', rebuild);
+rotInput.addEventListener('change', () => controls.autoRotate = rotInput.checked);
+const terrCountInput = document.getElementById('terrCount');
+const showBordersInput = document.getElementById('showBorders');
+terrCountInput.addEventListener('input', rebuild);
+showBordersInput.addEventListener('change', rebuild);
+
+// ---------- 游戏地图原型：点选 + A* 寻路 ----------
+const gameModeInput = document.getElementById('gameMode');
+gameModeInput.addEventListener('change', () => {
+  document.getElementById('pathStat').style.display = gameModeInput.checked ? '' : 'none';
+  if (!gameModeInput.checked) { clearOverlays(); selStart = selEnd = -1; }
+});
+
+const highlightMats = {
+  hover:  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22 }),
+  start:  new THREE.MeshBasicMaterial({ color: 0x3fb950 }),
+  end:    new THREE.MeshBasicMaterial({ color: 0xf85149 }),
+  path:   new THREE.MeshBasicMaterial({ color: 0xd29922 }),
+  nbr:    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.10 }),
+};
+let overlays = [];
+let selStart = -1, selEnd = -1;
+
+function cellGeometry(ci, lift = 1.012) {
+  const d = cellData[ci];
+  const pos = [];
+  const c = d.center.clone().multiplyScalar(lift);
+  for (let i = 0; i < d.ring.length; i++) {
+    pos.push(c, d.ring[i].clone().multiplyScalar(lift), d.ring[(i+1) % d.ring.length].clone().multiplyScalar(lift));
+  }
+  return new THREE.BufferGeometry().setFromPoints(pos);
+}
+function addOverlay(ci, mat) {
+  const g = cellGeometry(ci);
+  const m = new THREE.Mesh(g, mat);
+  overlayGroup.add(m);
+  overlays.push(g);
+}
+function clearOverlays() {
+  overlays.forEach(g => g.dispose());
+  overlays = [];
+  overlayGroup.clear();
+}
+
+// A*：格子邻接图上的寻路（球面弦距作启发函数）
+function astar(start, goal) {
+  const dist = (a, b) => cellData[a].center.distanceTo(cellData[b].center);
+  const open = new Map([[start, 0]]);
+  const g = new Map([[start, 0]]);
+  const came = new Map();
+  const closed = new Set();
+  while (open.size) {
+    let cur = -1, best = Infinity;
+    for (const [k, f] of open) if (f < best) { best = f; cur = k; }
+    if (cur === goal) {
+      const path = [cur];
+      while (came.has(cur)) { cur = came.get(cur); path.unshift(cur); }
+      return path;
+    }
+    open.delete(cur); closed.add(cur);
+    for (const nb of cellAdj[cur]) {
+      if (closed.has(nb) || !TERRAIN[cellData[nb].terrain].passable) continue; // 只有陆地能走
+      const ng = g.get(cur) + dist(cur, nb);
+      if (ng < (g.get(nb) ?? Infinity)) {
+        g.set(nb, ng); came.set(nb, cur);
+        open.set(nb, ng + dist(nb, goal));
+      }
+    }
+  }
+  return null;
+}
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+function pickCell(ev) {
+  if (!pickMesh) return -1;
+  pointer.x = (ev.clientX / innerWidth) * 2 - 1;
+  pointer.y = -(ev.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObject(pickMesh)[0];
+  if (!hit) return -1;
+  const tri = hit.faceIndex;
+  let lo = 0, hi = cellData.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const d = cellData[mid];
+    if (tri < d.triStart) hi = mid - 1;
+    else if (tri >= d.triStart + d.triCount) lo = mid + 1;
+    else return mid;
+  }
+  return -1;
+}
+
+let downPos = null;
+renderer.domElement.addEventListener('pointerdown', ev => downPos = [ev.clientX, ev.clientY]);
+renderer.domElement.addEventListener('pointerup', ev => {
+  if (!gameModeInput.checked || !downPos) return;
+  const moved = Math.hypot(ev.clientX - downPos[0], ev.clientY - downPos[1]);
+  downPos = null;
+  if (moved > 6) return; // 拖动视角，不算点击
+  const ci = pickCell(ev);
+  if (ci < 0) return;
+  if (!TERRAIN[cellData[ci].terrain].passable) {
+    document.getElementById('sPath').textContent = `${TERRAIN[cellData[ci].terrain].name}不可通行，请点击陆地`;
+    return;
+  }
+  controls.autoRotate = false; rotInput.checked = false; // 选中格子后停转，方便操作
+  if (selStart < 0 || selEnd >= 0) { // 选起点（或重置重选）
+    clearOverlays();
+    selStart = ci; selEnd = -1;
+    addOverlay(ci, highlightMats.start);
+    cellAdj[ci].forEach(n => addOverlay(n, highlightMats.nbr));
+    document.getElementById('sPath').textContent =
+      `起点 = ${ci} 号格（${cellAdj[ci].length} 个邻居），再点终点`;
+  } else if (ci !== selStart) { // 选终点，跑 A*
+    selEnd = ci;
+    const path = astar(selStart, selEnd);
+    clearOverlays();
+    addOverlay(selStart, highlightMats.start);
+    addOverlay(selEnd, highlightMats.end);
+    if (path) {
+      path.slice(1, -1).forEach(p => addOverlay(p, highlightMats.path));
+      document.getElementById('sPath').textContent = `${selStart} → ${selEnd}：${path.length - 1} 步（绕行陆地）`;
+    } else {
+      document.getElementById('sPath').textContent = '不可达：两块陆地不相连';
+    }
+  }
+});
+
+// 悬停高亮
+let hoverCell = -1, hoverOverlay = null;
+renderer.domElement.addEventListener('pointermove', ev => {
+  if (!gameModeInput.checked || ev.pointerType !== 'mouse') return;
+  const ci = pickCell(ev);
+  if (ci === hoverCell) return;
+  hoverCell = ci;
+  if (hoverOverlay) { overlayGroup.remove(hoverOverlay); hoverOverlay.geometry.dispose(); hoverOverlay = null; }
+  if (ci >= 0 && ci !== selStart && ci !== selEnd) {
+    hoverOverlay = new THREE.Mesh(cellGeometry(ci), highlightMats.hover);
+    overlayGroup.add(hoverOverlay);
+  }
+});
+
+rebuild();
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
