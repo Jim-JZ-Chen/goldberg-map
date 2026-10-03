@@ -10,7 +10,7 @@
  * }
  */
 import * as THREE from 'three';
-import { TERRAIN, TERRITORY_COLORS, RENDER, RING, SPHERE_R } from './config.js';
+import { TERRAIN, TERRITORY_COLORS, RENDER, SPHERE_R } from './config.js';
 
 const matTerrain = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.1, side: THREE.DoubleSide });
 const matEdge = new THREE.LineBasicMaterial({ color: 0x0d1117 });
@@ -95,46 +95,22 @@ function buildBorderGeometry(model) {
 }
 
 /**
- * 构建赤道环（土星环样式）。
- * 用 Canvas 径向渐变纹理模拟环带的明暗分层与缝隙，贴在 XZ 平面的环形几何体上。
- * @returns {{mesh: THREE.Mesh, dispose(): void}}
+ * 构建参考线：赤道一圈细线 + 过两极的一条经线大圆。
+ * 赤道在 XZ 平面，经线在 YZ 平面，均用 LineLoop。
+ * @returns {{lines: THREE.LineLoop[], dispose(): void}}
  */
-function buildRing() {
-  // 径向条纹纹理：alpha 沿半径变化，做出「环带 + 卡西尼缝」的效果
-  const N = 512;
-  const cv = document.createElement('canvas');
-  cv.width = N; cv.height = 1;
-  const ctx = cv.getContext('2d');
-  for (let x = 0; x < N; x++) {
-    const t = x / (N - 1); // 0=内缘 1=外缘
-    let a = 0.35 + 0.4 * Math.sin(t * Math.PI); // 整体内暗外暗中间亮
-    a *= 0.75 + 0.25 * Math.sin(t * 40 + 1.7);  // 细密环纹
-    a *= 0.6 + 0.4 * Math.sin(t * 9 - 0.5);     // 宽环带
-    if (t > 0.58 && t < 0.66) a *= 0.12;        // 卡西尼式主缝
-    if (t > 0.83 && t < 0.85) a *= 0.3;         // 次级窄缝
-    // 边缘羽化，避免硬边
-    a *= Math.min(1, t / 0.06, (1 - t) / 0.08);
-    ctx.fillStyle = `rgba(255,255,255,${Math.max(0, Math.min(1, a)).toFixed(3)})`;
-    ctx.fillRect(x, 0, 1, 1);
-  }
-  const tex = new THREE.CanvasTexture(cv);
-
-  const g = new THREE.RingGeometry(RING.innerR, RING.outerR, 256, 1);
-  // RingGeometry 的 UV 默认按矩形映射，改成径向映射：u = 到内缘的径向比例
-  const uv = g.attributes.uv, p = g.attributes.position;
-  const w = RING.outerR - RING.innerR;
-  for (let i = 0; i < uv.count; i++) {
-    const r = Math.hypot(p.getX(i), p.getY(i));
-    uv.setXY(i, (r - RING.innerR) / w, 0.5);
-  }
-  const m = new THREE.MeshBasicMaterial({
-    color: RING.color, alphaMap: tex, transparent: true, opacity: RING.opacity,
-    side: THREE.DoubleSide, depthWrite: false, // 半透明不写深度，避免挡住背面板块
-  });
-  const mesh = new THREE.Mesh(g, m);
-  mesh.rotation.x = -Math.PI / 2; // 默认 XY 平面 -> 转到 XZ 赤道面
-  mesh.renderOrder = 2;           // 在球体之后绘制
-  return { mesh, dispose() { g.dispose(); tex.dispose(); m.dispose(); } };
+function buildGuideLines() {
+  const SEG = 180, R = 1.02; // 略高于球面，避免深度冲突
+  const circle = (fn) => {
+    const pts = [];
+    for (let i = 0; i < SEG; i++) pts.push(fn((i / SEG) * Math.PI * 2));
+    return new THREE.BufferGeometry().setFromPoints(pts);
+  };
+  const eg = circle(t => new THREE.Vector3(Math.cos(t) * R, 0, Math.sin(t) * R)); // 赤道
+  const mg = circle(t => new THREE.Vector3(0, Math.cos(t) * R, Math.sin(t) * R)); // 经线（过两极）
+  const mat = new THREE.LineBasicMaterial({ color: 0x58d6ff, transparent: true, opacity: 0.5 });
+  const lines = [new THREE.LineLoop(eg, mat), new THREE.LineLoop(mg, mat)];
+  return { lines, dispose() { eg.dispose(); mg.dispose(); mat.dispose(); } };
 }
 
 /**
@@ -158,10 +134,10 @@ export function renderMap(model, opts = {}) {
   group.add(new THREE.Mesh(ig, new THREE.MeshBasicMaterial({ color: 0x0a0e14 })));
   disposables.push(ig);
 
-  // 赤道环（土星环样式，半透明）
-  const ring = buildRing();
-  group.add(ring.mesh);
-  disposables.push(ring);
+  // 赤道参考线 + 过两极的经线
+  const guides = buildGuideLines();
+  guides.lines.forEach(l => group.add(l));
+  disposables.push(guides);
 
   // 格子描边
   const edgePos = [];

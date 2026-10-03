@@ -32,14 +32,6 @@ export const RENDER = {
   innerSphereR: 0.88,     // 垫底内球半径（挡住板块间隙的透视）
 };
 
-/** 赤道环（土星环样式）参数 */
-export const RING = {
-  innerR: 1.45,           // 内半径
-  outerR: 2.3,            // 外半径
-  opacity: 0.55,          // 整体不透明度
-  color: 0xc8b896,        // 冰岩颗粒的土黄色
-};
-
 /** 等面积松弛迭代参数（Snyder 思路的数值实现） */
 export const RELAX = { iterations: 350, step: 0.15, h: 1e-4 };
 
